@@ -24,28 +24,33 @@ function add(img, url = '', cb) {
   }
   let id = getSysId();
   imgs[id] = { id, img, url, cb };
-  if (working) {
+  let len = workingList.length;
+  if (len >= config.per) {
     waitingList[waitingList.length] = id;
     return;
   }
 
   workingList[workingList.length] = id;
 
-  if (workingList.length >= 5) {
+  if (!working) {
     setupImgsLoad();
   }
 }
 
 function use(opt = {}) {
   config = Object.assign({}, config, {
-    per: Number.isInteger(opt.per) ? opt.per : config.per,
-    gap: Number.isInteger(opt.gap) ? opt.gap : config.gap,
+    per: Number.isInteger(opt.per) && opt.per > 0 ? opt.per : config.per,
+    gap: Number.isInteger(opt.gap) && opt.gap >= 0 ? opt.gap : config.gap,
     debug: !!opt.debug
   });
 }
 
 //========================================================================
-
+/**
+ * @private
+ *
+ * 启动图片加载
+ */
 function setupImgsLoad() {
   if (working) {
     return;
@@ -60,6 +65,9 @@ function setupImgsLoad() {
   }, config.gap);
 }
 
+/**
+ * 检查并启动等待中的图片加载
+ */
 function checkWaiters() {
   let len = waitingList.length;
 
@@ -67,18 +75,21 @@ function checkWaiters() {
     return;
   }
 
-  if (len < 5) {
+  if (len < config.per) {
     workingList = waitingList.slice(0);
     waitingList = [];
     setupImgsLoad();
     return;
   }
 
-  workingList = waitingList.slice(0, 5);
-  waitingList = waitingList.slice(5);
+  workingList = waitingList.slice(0, config.per);
+  waitingList = waitingList.slice(config.per);
   setupImgsLoad();
 }
-
+/**
+ * 加载图片
+ * @param {*} list
+ */
 function loadImgs(list = []) {
   let len = list.length;
   while (len--) {
@@ -90,7 +101,10 @@ function loadImgs(list = []) {
     data.img.src = data.url;
   }
 }
-
+/**
+ * 为图片数据添加属性和方法
+ * @param {*} id
+ */
 function decorateImg(id = '') {
   let item = imgs[id];
   if (!id || !item) {
@@ -122,7 +136,10 @@ function decorateImg(id = '') {
 
   return item;
 }
-
+/**
+ * 移除图片数据中的属性和方法
+ * @param {*} imgData
+ */
 function washImg(imgData = {}) {
   if (!imgData.id) {
     return;
@@ -141,7 +158,7 @@ function washImg(imgData = {}) {
   imgData.id = null;
   imgData = null;
 }
-
+//====================================================
 export default {
   add,
   use,
