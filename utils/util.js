@@ -33,6 +33,10 @@ async function execute(list = [], ...params) {
     if (data && data.isError) {
       return Promise.reject(data);
     }
+
+    if (data && data.isEnd) {
+      return Promise.resolve(data);
+    }
   }
 
   return Promise.resolve(data);
