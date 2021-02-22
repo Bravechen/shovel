@@ -4,7 +4,9 @@
  * @version 0.1.0
  */
 //====================================================
-import { getSysId } from '../utils/util';
+import {
+  getSysId
+} from '../utils/util';
 //====================================================
 /**
  * 空闲的调度者集合
@@ -47,20 +49,201 @@ let workingList = [];
  * 等待分配空闲worker的数据队列
  */
 let waitingList = [];
+//======================================================================
 /**
  * 初始化完成标识
  */
 let initialized = false;
 
-let WM = {
-  initialize
-};
+// let WM = {
+//   initialize
+// };
+
+/**
+ * @private
+ * @description 空闲的调度者集合
+ *
+ * ```typescript
+ * idleWorkerMap:Map<string, Array<string>>
+ * ```
+ * 
+ * ```js
+ * idleWorkerMap {
+ *  [worker path]: [scheduler.id, ...]
+ * }
+ * ```
+ */
+let idleWorkerMap = {};
+
 
 let debug = false;
 
 let clearCount = 120000; //默认2分钟清理一次
 let maxWorkers = 2; // 默认最大2个线程
 let wmTimer = null;
+//====================================================
+const s_methods = {
+  add() {
+
+  },
+  remove() {
+
+  }
+};
+
+function isObj(obj) {
+  return obj !== null && typeof obj === 'object';
+}
+
+//====================================================
+function WM(alias) {
+  if (!initialized) {
+    init();
+  }
+
+  if (typeof alias === 'string') {
+
+  }
+
+  if (isObj(alias)) {
+
+  }
+
+}
+
+/**
+ * @public
+ * 配置WorkerManager
+ * @param {Object} config [optional] 配置
+ *
+ * ```typescript
+ * interface IConfig {
+ *   workers: Map<string, string>;
+ *   debug: boolean;
+ *   clearCount: number;
+ *   maxWorkers: number;
+ * }
+ * ```
+ *  解释及例子
+ * ```js
+ * 
+ * config {
+ *  // worker 别名集合，注册以后，可以是使用`WM(worker alias).message()`使用worker
+ *  workers: {
+ *    // [别名]: worker文件地址
+ *    [worker name]: workerPath
+ *    // ...
+ *  },
+ *  // debug模式，会有相应运行输出，默认关闭
+ *  debug: false, 
+ *  // 清理空闲worker的时间间隔，单位毫秒，默认2分钟（120000ms）
+ *  clearCount: 120000,
+ *  // 同时允许使用的最大worker数量，默认2个
+ *  maxWorkers: 2 
+ * }
+ *
+ * ```
+ */
+WM.config = function (config = {}) {
+  return [
+    registerAlias,
+    setClearTime,
+    setMaxWorkers,
+    setDebug
+  ].refuce(function (prev, item) {
+    item(prev);
+    return prev;
+  }, config);
+};
+
+WM.message = function () {
+
+};
+
+/**
+ * @public
+ * @description 销毁及释放不可再用
+ */
+WM.destroy = function () {
+  schedulers = null;
+  registers = null;
+  workers = null;
+  workingList = null;
+  waitingList = null;
+  clearCount = null;
+  maxWorkers = null;
+  if (wmTimer) {
+    clearTimeout(wmTimer);
+    wmTimer = null;
+  }
+  WM = null;
+};
+
+//====================================================
+// 注册worker文件别名
+function registerAlias(config) {
+  let entries = Object.entries(config.workers || {});
+  for (let [key, value] of entries) {
+    if (!value) {
+      continue;
+    }
+    // 注册worker别名
+    registers[key] = value;
+    // 建立worker调度者对象池
+    schedulers[value] = [];
+  }
+}
+// 设置清理空闲worker间隔
+function setClearTime(config) {
+  clearCount = Number.isInteger(config.clearCount) || clearCount;
+}
+// 设置最大同时运行的worker数量
+function setMaxWorkers(config) {
+  maxWorkers = Number.isInteger(config.maxWorkers) || maxWorkers;
+}
+// debug 模式
+function setDebug(config) {
+  debug = !!config.debug;
+}
+// 初始化
+function init() {
+  if (initialized) {
+    return;
+  }
+  registers = {};
+  Object.defineProperties(WM, {
+    workers: {
+      get() {
+        return Object.entries(registers);
+      },
+      configurable: false,
+      enumerable: false
+    },
+    clearCount: {
+      get() {
+        return clearCount;
+      },
+      configurable: false,
+      enumerable: false
+    },
+    maxWorkers: {
+      get() {
+        return maxWorkers;
+      },
+      configurable: false,
+      enumerable: false
+    },
+    debug: {
+      get() {
+        return debug;
+      },
+      configurable: false,
+      enumerable: false
+    }
+  });
+
+  initialized = true;
+}
 //====================================================
 /**
  * worker调度者
@@ -72,6 +255,7 @@ class Scheduler {
    */
   constructor(path) {
     this.id = getSysId();
+    // 加入调度者集合
     workers[this.id] = this;
     this.init(path);
   }
@@ -94,7 +278,13 @@ class Scheduler {
    * @param {Function} cb [required] 结果回调
    */
   message(data = {}, cb) {
-    if (typeof cb !== 'function' || this.using) {
+    if (typeof cb !== 'function') {
+      console.error(`In WorkerManager Scheduler.message(), need a callback that named "cb"`);
+      return;
+    }
+
+    if (this.using) {
+      console.warn(`In WorkerManager Scheduler.message(), the worker is still working, please wait.`);
       return;
     }
 
@@ -102,17 +292,22 @@ class Scheduler {
     let failedHandler = error.bind(this);
 
     this.using = true;
+
     add.call(this);
     // 成功
     function success(e) {
-      cb.call(null, null, e.data);
+      cb.apply(null, [null, e.data]);
+
       remove.call(this);
+
       this.toIdle();
     }
     // 失败
     function error(err) {
-      cb.call(null, err, null);
+      cb.apply(null, [err, null]);
+
       remove.call(this);
+
       this.toIdle();
     }
     // 添加事件
@@ -126,8 +321,10 @@ class Scheduler {
       this.worker.removeEventListener('error', failedHandler);
     }
 
+    // send message to worker
     this.worker.postMessage(data);
   }
+
   /**
    * @private
    * 将自己移入空闲队列
@@ -168,7 +365,10 @@ function backIntoIdle(schedulerId = '') {
     return;
   }
   let scheduler = workers[schedulerId];
+  // 从工作队列中移除调度者
   workingList.splice(workingList.indexOf(schedulerId), 1);
+
+  // 加入相同类型调度者的等待队列
   let list = schedulers[scheduler.path];
   list.push(schedulerId);
 
@@ -274,13 +474,13 @@ function getScheduler(workerPath) {
  */
 function setupScheduler(scheduler, data, cb) {
   let timer = setTimeout(
-    (function(scheduler) {
+    (function (scheduler) {
       // 把自己加入到工作队列中去
       workingList[workingList.length] = scheduler.id;
       if (debug) {
         console.warn(`The scheduler: ${scheduler.id} into the working list.`);
       }
-      return function() {
+      return function () {
         clearTimeout(timer);
         if (debug) {
           console.warn('will setup worker=======>>>', scheduler.id, data.type);
@@ -307,8 +507,7 @@ function checkMsgParams(initialized, workerPath, cb) {
       `workerPath:${workerPath}`,
       `typeof cb !== 'function':${typeof cb !== 'function'}`
     );
-    cb(
-      {
+    cb({
         isError: true,
         message: 'In WM message(), params are error.'
       },
@@ -432,49 +631,49 @@ function message(workerPath, data = {}, cb) {
  *
  * ```
  */
-function initialize(config = {}) {
-  if (initialized) {
-    return;
-  }
-  registers = {};
-  let entries = Object.entries(config.workers || {});
-  for (let [key, value] of entries) {
-    if (!value) {
-      continue;
-    }
-    registers[key] = value;
-    schedulers[value] = [];
-  }
+// function initialize(config = {}) {
+//   if (initialized) {
+//     return;
+//   }
+//   registers = {};
+//   let entries = Object.entries(config.workers || {});
+//   for (let [key, value] of entries) {
+//     if (!value) {
+//       continue;
+//     }
+//     registers[key] = value;
+//     schedulers[value] = [];
+//   }
 
-  clearCount = Number.isInteger(config.clearCount) || clearCount;
-  maxWorkers = Number.isInteger(config.maxWorkers) || maxWorkers;
-  debug = !!config.debug;
+//   clearCount = Number.isInteger(config.clearCount) || clearCount;
+//   maxWorkers = Number.isInteger(config.maxWorkers) || maxWorkers;
+//   debug = !!config.debug;
 
-  WM.workers = registers;
-  WM.message = message;
-  WM.destroy = destroy;
+//   WM.workers = registers;
+//   WM.message = message;
+//   WM.destroy = destroy;
 
-  initialized = true;
-}
+//   initialized = true;
+// }
 
 /**
  * @public
  * 销毁，不可再用
  */
-function destroy() {
-  schedulers = null;
-  registers = null;
-  workers = null;
-  workingList = null;
-  waitingList = null;
-  clearCount = null;
-  maxWorkers = null;
-  if (wmTimer) {
-    clearTimeout(wmTimer);
-    wmTimer = null;
-  }
-  WM = null;
-}
+// function destroy() {
+//   schedulers = null;
+//   registers = null;
+//   workers = null;
+//   workingList = null;
+//   waitingList = null;
+//   clearCount = null;
+//   maxWorkers = null;
+//   if (wmTimer) {
+//     clearTimeout(wmTimer);
+//     wmTimer = null;
+//   }
+//   WM = null;
+// }
 //====================================================================
 
 export default WM;
